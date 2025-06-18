@@ -1,4 +1,7 @@
+'use client';
+
 import type { ReactNode } from 'react';
+import { useState, useEffect } from 'react';
 import Header from './Header';
 
 interface AppLayoutProps {
@@ -6,6 +9,12 @@ interface AppLayoutProps {
 }
 
 export default function AppLayout({ children }: AppLayoutProps) {
+  const [currentYear, setCurrentYear] = useState<number | null>(null);
+
+  useEffect(() => {
+    setCurrentYear(new Date().getFullYear());
+  }, []);
+
   return (
     <div className="flex min-h-screen flex-col">
       <Header />
@@ -13,7 +22,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
         {children}
       </main>
       <footer className="py-6 text-center text-sm text-muted-foreground">
-        © {new Date().getFullYear()} ExcelFlow. All rights reserved.
+        © {currentYear || new Date().getFullYear()} ExcelFlow. All rights reserved.
       </footer>
     </div>
   );
