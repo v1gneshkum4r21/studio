@@ -1,11 +1,32 @@
+
+'use client';
+
+import { useState } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
-import FileUploadSection from '@/components/excel-flow/FileUploadSection';
+import FileUploadSection, { type UploadedBackendFile } from '@/components/excel-flow/FileUploadSection';
 import PipelineSettingsSection from '@/components/excel-flow/PipelineSettingsSection';
 import ResultsSection from '@/components/excel-flow/ResultsSection';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
 
 export default function HomePage() {
+  const [uploadedTemplateFiles, setUploadedTemplateFiles] = useState<UploadedBackendFile[]>([]);
+  const [uploadedVendorFiles, setUploadedVendorFiles] = useState<UploadedBackendFile[]>([]);
+  const [currentRunId, setCurrentRunId] = useState<string | null>(null);
+
+  const handleTemplatesUploaded = (files: UploadedBackendFile[]) => {
+    setUploadedTemplateFiles(files);
+  };
+
+  const handleVendorsUploaded = (files: UploadedBackendFile[]) => {
+    setUploadedVendorFiles(files);
+  };
+
+  const handlePipelineExecuted = (runId: string) => {
+    setCurrentRunId(runId);
+    // Clear uploaded files after starting a run, as they are now processed
+    setUploadedTemplateFiles([]);
+    setUploadedVendorFiles([]);
+  };
+
   return (
     <AppLayout>
       <div className="space-y-8">
@@ -16,11 +37,20 @@ export default function HomePage() {
 
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
           <div className="lg:col-span-2 space-y-8">
-            <FileUploadSection />
-            <PipelineSettingsSection />
+            <FileUploadSection
+              onTemplatesUploaded={handleTemplatesUploaded}
+              onVendorsUploaded={handleVendorsUploaded}
+              key={currentRunId} // Re-mount to clear local files after execution
+            />
+            <PipelineSettingsSection
+              templateFileIds={uploadedTemplateFiles.map(f => f.id)}
+              vendorFileIds={uploadedVendorFiles.map(f => f.id)}
+              onPipelineExecuted={handlePipelineExecuted}
+              hasFilesToProcess={uploadedTemplateFiles.length > 0 && uploadedVendorFiles.length > 0}
+            />
           </div>
           <div className="lg:col-span-1">
-            <ResultsSection />
+            <ResultsSection runId={currentRunId} key={currentRunId} />
           </div>
         </div>
       </div>

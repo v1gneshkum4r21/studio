@@ -6,19 +6,24 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { UploadCloud, FileText, XCircle, Trash2, AlertTriangle } from 'lucide-react';
+import { UploadCloud, FileText, XCircle, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
-interface UploadedFile {
-  id: string;
+interface LocalFile {
+  id: string; // Used for UI key, e.g., file.name + Date.now()
   name: string;
   size: number;
   type: string;
-  progress?: number;
   fileObject: File;
+  progress?: number; // For local simulation if needed, or actual upload progress
+}
+
+export interface UploadedBackendFile {
+  id: string; // This will be the ID/filename returned by the backend
+  name: string; // Can be the same as id or a display name
 }
 
 interface ApiEndpoint {
@@ -28,9 +33,8 @@ interface ApiEndpoint {
   description: string;
 }
 
-const API_ENDPOINTS_STORAGE_KEY = 'excelFlowApiEndpoints'; // Must match key in ApiDocsPage
+const API_ENDPOINTS_STORAGE_KEY = 'excelFlowApiEndpoints';
 
-// Helper function to get API endpoint from localStorage
 const getApiEndpoint = (pathKey: string, method: 'GET' | 'POST' | 'DELETE'): ApiEndpoint | undefined => {
   try {
     const storedEndpoints = localStorage.getItem(API_ENDPOINTS_STORAGE_KEY);
@@ -44,10 +48,14 @@ const getApiEndpoint = (pathKey: string, method: 'GET' | 'POST' | 'DELETE'): Api
   return undefined;
 };
 
+interface FileUploadSectionProps {
+  onTemplatesUploaded: (files: UploadedBackendFile[]) => void;
+  onVendorsUploaded: (files: UploadedBackendFile[]) => void;
+}
 
-export default function FileUploadSection() {
-  const [templateFiles, setTemplateFiles] = useState<UploadedFile[]>([]);
-  const [vendorFiles, setVendorFiles] = useState<UploadedFile[]>([]);
+export default function FileUploadSection({ onTemplatesUploaded, onVendorsUploaded }: FileUploadSectionProps) {
+  const [templateFiles, setTemplateFiles] = useState<LocalFile[]>([]);
+  const [vendorFiles, setVendorFiles] = useState<LocalFile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const { toast } = useToast();
 
@@ -56,7 +64,7 @@ export default function FileUploadSection() {
 
   const handleFileChange = (
     event: ChangeEvent<HTMLInputElement>,
-    setFiles: React.Dispatch<React.SetStateAction<UploadedFile[]>>
+    setFiles: React.Dispatch<React.SetStateAction<LocalFile[]>>
   ) => {
     if (event.target.files) {
       const newFiles = Array.from(event.target.files).map((file) => ({
@@ -64,59 +72,83 @@ export default function FileUploadSection() {
         name: file.name,
         size: file.size,
         type: file.type,
-        progress: 0,
         fileObject: file,
+        progress: 0,
       }));
       setFiles((prevFiles) => [...prevFiles, ...newFiles]);
+    }
+     // Reset the input value to allow uploading the same file again
+    if (event.target) {
+      event.target.value = "";
     }
   };
 
   const removeFile = (
     id: string,
-    setFiles: React.Dispatch<React.SetStateAction<UploadedFile[]>>
+    setFiles: React.Dispatch<React.SetStateAction<LocalFile[]>>
   ) => {
     setFiles((prevFiles) => prevFiles.filter((file) => file.id !== id));
   };
 
-  const simulateUpload = (files: UploadedFile[], setFiles: React.Dispatch<React.SetStateAction<UploadedFile[]>>, endpointPath: string | undefined, fileType: string) => {
-    if (!endpointPath) {
-        toast({
-            title: `Upload Configuration Error for ${fileType} files`,
-            description: `The API endpoint for ${fileType.toLowerCase()} uploads is not configured. Please define it in API Docs. Path e.g. /template/upload or /vendor/upload.`,
-            variant: "destructive",
-            duration: 7000,
-        });
-        files.forEach(file => {
-             setFiles(prev => prev.map(f => f.id === file.id ? {...f, progress: 0 } : f)); // Reset progress if endpoint missing
-        });
-        return false; // Indicate failure
+  const uploadFiles = async (
+    filesToUpload: LocalFile[],
+    endpointPath: string,
+    fileType: string,
+    onSuccessCallback: (uploadedFiles: UploadedBackendFile[]) => void
+  ): Promise<boolean> => {
+    const apiEndpoint = getApiEndpoint(endpointPath, 'POST');
+    if (!apiEndpoint) {
+      toast({
+        title: `Upload Configuration Error for ${fileType} files`,
+        description: `The API endpoint '${endpointPath}' (POST) is not configured. Please define it in API Docs.`,
+        variant: "destructive",
+        duration: 7000,
+      });
+      return false;
     }
-    
-    // If endpointPath is found, proceed with simulation
-    toast({
-        title: `Simulating upload for ${fileType} files`,
-        description: `Using endpoint: POST ${endpointPath}`,
-        variant: "default"
-    })
 
-    files.forEach(file => {
-      if (file.progress === 0 || file.progress === undefined) { 
-        let currentProgress = 0;
-        const interval = setInterval(() => {
-          currentProgress += 10;
-          if (currentProgress <= 100) {
-            setFiles(prev => prev.map(f => f.id === file.id ? {...f, progress: currentProgress} : f));
-          } else {
-            clearInterval(interval);
-            setFiles(prev => prev.map(f => f.id === file.id ? {...f, progress: 100} : f));
-          }
-        }, 200);
-      }
+    const formData = new FormData();
+    filesToUpload.forEach(file => {
+      formData.append('files', file.fileObject, file.name);
     });
-    return true; // Indicate success
+
+    try {
+      const response = await fetch(`http://localhost:8000${apiEndpoint.path}`, { // Assuming FastAPI runs on port 8000
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown upload error' }));
+        throw new Error(errorData.detail || `Failed to upload ${fileType} files. Status: ${response.status}`);
+      }
+
+      const result = await response.json();
+      const backendFiles: UploadedBackendFile[] = result.uploaded_files.map((fileId: string) => ({
+        id: fileId,
+        name: fileId, // Or derive name if backend provides more info
+      }));
+      
+      onSuccessCallback(backendFiles); // Pass backend confirmed files to parent
+      
+      toast({
+        title: `${fileType} Files Uploaded`,
+        description: `${backendFiles.length} file(s) uploaded successfully. Backend IDs: ${backendFiles.map(f => f.id).join(', ')}`,
+        variant: 'default',
+        className: "bg-accent text-accent-foreground"
+      });
+      return true;
+    } catch (error: any) {
+      toast({
+        title: `Upload Failed for ${fileType} files`,
+        description: error.message || 'An unexpected error occurred.',
+        variant: 'destructive',
+      });
+      return false;
+    }
   };
 
-  const handleUploadAll = () => {
+  const handleUploadAll = async () => {
     if (templateFiles.length === 0 && vendorFiles.length === 0) {
       toast({
         title: "No files selected",
@@ -127,42 +159,38 @@ export default function FileUploadSection() {
     }
     
     setIsUploading(true);
-
-    // Dynamically get endpoint paths
-    // For this demo, we assume specific paths. In a real app, you might use more robust keys.
-    const templateUploadEndpoint = getApiEndpoint('/template/upload', 'POST');
-    const vendorUploadEndpoint = getApiEndpoint('/vendor/upload', 'POST');
-
-    let templateUploadSuccess = true;
-    let vendorUploadSuccess = true;
+    let allUploadsSuccessful = true;
 
     if (templateFiles.length > 0) {
-        templateUploadSuccess = simulateUpload(templateFiles, setTemplateFiles, templateUploadEndpoint?.path, "Template");
+      const success = await uploadFiles(templateFiles, '/template/upload', 'Template', onTemplatesUploaded);
+      if (success) {
+        setTemplateFiles([]); // Clear local list on successful upload
+      } else {
+        allUploadsSuccessful = false;
+      }
     }
     if (vendorFiles.length > 0) {
-        vendorUploadSuccess = simulateUpload(vendorFiles, setVendorFiles, vendorUploadEndpoint?.path, "Vendor");
+      const success = await uploadFiles(vendorFiles, '/vendor/upload', 'Vendor', onVendorsUploaded);
+      if (success) {
+        setVendorFiles([]); // Clear local list on successful upload
+      } else {
+        allUploadsSuccessful = false;
+      }
     }
     
-    if (!templateUploadSuccess || !vendorUploadSuccess) {
-        setIsUploading(false); // Stop here if config is missing
-        return;
-    }
-
-    setTimeout(() => {
-      setIsUploading(false);
-      const allFilesCount = templateFiles.length + vendorFiles.length;
-      if (allFilesCount > 0) {
-        toast({
-          title: "Upload Complete (Simulated)",
-          description: `${allFilesCount} file(s) processed.`,
+    setIsUploading(false);
+    if (allUploadsSuccessful && (templateFiles.length > 0 || vendorFiles.length > 0)) {
+       toast({
+          title: "All Selected Files Processed for Upload",
+          description: "Uploads initiated. Check individual toasts for status.",
           variant: "default",
-          className: "bg-accent text-accent-foreground"
         });
-      }
-    }, 2500); 
+    } else if (!allUploadsSuccessful) {
+        // Individual error toasts would have already appeared
+    }
   };
   
-  const FileList = ({ files, setFiles, type }: { files: UploadedFile[], setFiles: React.Dispatch<React.SetStateAction<UploadedFile[]>>, type: string }) => {
+  const FileListDisplay = ({ files, setFilesFunction, typeLabel }: { files: LocalFile[], setFilesFunction: React.Dispatch<React.SetStateAction<LocalFile[]>>, typeLabel: string }) => {
     return (
       <div className="space-y-2 mt-4">
         {files.map((file) => (
@@ -177,11 +205,12 @@ export default function FileUploadSection() {
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-              {file.progress !== undefined && file.progress < 100 && file.progress > 0 && (
+              {/* Progress bar could be used if server sent progress, or for a more complex local simulation */}
+              {/* {file.progress !== undefined && file.progress < 100 && file.progress > 0 && (
                 <Progress value={file.progress} className="w-20 h-2" />
               )}
-              {file.progress === 100 && <span className="text-xs text-green-600">Done</span>}
-              <Button variant="ghost" size="icon" onClick={() => removeFile(file.id, setFiles)} aria-label={`Remove ${file.name}`}>
+              {file.progress === 100 && <span className="text-xs text-green-600">Done</span>} */}
+              <Button variant="ghost" size="icon" onClick={() => removeFile(file.id, setFilesFunction)} aria-label={`Remove ${file.name}`}>
                 <XCircle className="h-4 w-4 text-destructive" />
               </Button>
             </div>
@@ -197,13 +226,13 @@ export default function FileUploadSection() {
         <CardTitle className="font-headline text-xl flex items-center">
           <UploadCloud className="mr-2 h-6 w-6 text-primary" /> File Upload &amp; Management
         </CardTitle>
-        <CardDescription>Upload template and vendor Excel files for processing. API endpoints are sourced from API Docs page.</CardDescription>
+        <CardDescription>Upload template and vendor Excel files. Files are sent to the backend. Ensure API endpoints are defined in API Docs and FastAPI server is running with CORS configured.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <Alert variant="default" className="border-primary/30 bg-primary/5">
             <AlertTriangle className="h-4 w-4 text-primary" />
             <AlertDescription className="text-primary/90 text-xs">
-                Ensure corresponding 'POST' endpoints (e.g., '/template/upload', '/vendor/upload') are defined on the API Docs page for uploads to be simulated correctly.
+                Ensure 'POST' endpoints for '/template/upload' and '/vendor/upload' are defined on the API Docs page. The FastAPI server must be running on port 8000 and have CORS enabled for your frontend origin (e.g., http://localhost:9002).
             </AlertDescription>
         </Alert>
 
@@ -216,12 +245,12 @@ export default function FileUploadSection() {
             ref={templateFileInputRef}
             onChange={(e) => handleFileChange(e, setTemplateFiles)}
             className="mt-2"
-            accept=".xlsx, .xls, .csv"
+            accept=".xlsx, .xls"
           />
-          <FileList files={templateFiles} setFiles={setTemplateFiles} type="template" />
+          <FileListDisplay files={templateFiles} setFilesFunction={setTemplateFiles} typeLabel="template" />
           {templateFiles.length > 0 && (
             <Button variant="outline" size="sm" onClick={() => setTemplateFiles([])} className="mt-2 text-destructive hover:text-destructive">
-              <Trash2 className="mr-2 h-4 w-4" /> Clear Template Files
+              <Trash2 className="mr-2 h-4 w-4" /> Clear Template Files Staging
             </Button>
           )}
         </div>
@@ -235,12 +264,12 @@ export default function FileUploadSection() {
             ref={vendorFileInputRef}
             onChange={(e) => handleFileChange(e, setVendorFiles)}
             className="mt-2"
-            accept=".xlsx, .xls, .csv"
+            accept=".xlsx, .xls"
           />
-          <FileList files={vendorFiles} setFiles={setVendorFiles} type="vendor" />
+          <FileListDisplay files={vendorFiles} setFilesFunction={setVendorFiles} typeLabel="vendor" />
            {vendorFiles.length > 0 && (
             <Button variant="outline" size="sm" onClick={() => setVendorFiles([])} className="mt-2 text-destructive hover:text-destructive">
-              <Trash2 className="mr-2 h-4 w-4" /> Clear Vendor Files
+              <Trash2 className="mr-2 h-4 w-4" /> Clear Vendor Files Staging
             </Button>
           )}
         </div>
@@ -249,14 +278,14 @@ export default function FileUploadSection() {
            <AlertDialog>
             <AlertDialogTrigger asChild>
               <Button variant="destructive" disabled={isUploading || (templateFiles.length === 0 && vendorFiles.length === 0)}>
-                <Trash2 className="mr-2 h-4 w-4" /> Clear All Files
+                <Trash2 className="mr-2 h-4 w-4" /> Clear All Staged Files
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>Are you sure?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This action will remove all selected template and vendor files. This cannot be undone.
+                  This action will remove all template and vendor files currently staged for upload. This does not affect already uploaded files on the server.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
@@ -265,31 +294,20 @@ export default function FileUploadSection() {
                   onClick={() => {
                     setTemplateFiles([]);
                     setVendorFiles([]);
-                    toast({ title: "All files cleared", variant: "default" });
+                    toast({ title: "All staged files cleared", variant: "default" });
                   }}
                   className="bg-destructive hover:bg-destructive/90"
                 >
-                  Confirm Clear
+                  Confirm Clear Staging
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
           <Button onClick={handleUploadAll} disabled={isUploading || (templateFiles.length === 0 && vendorFiles.length === 0)} className="bg-accent hover:bg-accent/90 text-accent-foreground">
-            <UploadCloud className="mr-2 h-4 w-4" /> {isUploading ? 'Uploading...' : 'Upload All'}
+            {isUploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
+            {isUploading ? 'Uploading...' : 'Upload All Staged'}
           </Button>
         </div>
-        {isUploading && 
-          (templateFiles.some(f => f.progress !== undefined && f.progress < 100 && f.progress > 0) || 
-           vendorFiles.some(f => f.progress !== undefined && f.progress < 100 && f.progress > 0)) && (
-            <Progress 
-                value={
-                    (templateFiles.filter(f=>f.progress === 100).length + vendorFiles.filter(f=>f.progress === 100).length) / 
-                    (templateFiles.length + vendorFiles.length || 1) * 100
-                } 
-                className="w-full h-2 mt-2" 
-            />
-        )}
-
       </CardContent>
     </Card>
   );
