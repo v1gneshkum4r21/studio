@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState } from 'react';
@@ -5,10 +6,33 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { BotMessageSquare, CheckCircle2, Percent, Loader2, Info } from 'lucide-react';
+import { BotMessageSquare, CheckCircle2, Percent, Loader2, Info, AlertTriangle } from 'lucide-react';
 import { compareJsonAccuracy, CompareJsonAccuracyInput, CompareJsonAccuracyOutput } from '@/ai/flows/compare-json-accuracy';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+
+// Interface and constant for API endpoint configuration
+interface ApiEndpoint {
+  id: string;
+  path: string;
+  method: 'GET' | 'POST' | 'DELETE';
+  description: string;
+}
+const API_ENDPOINTS_STORAGE_KEY = 'excelFlowApiEndpoints';
+
+// Helper function to get API endpoint from localStorage
+const getApiEndpoint = (pathKey: string, method: 'GET' | 'POST' | 'DELETE'): ApiEndpoint | undefined => {
+  try {
+    const storedEndpoints = localStorage.getItem(API_ENDPOINTS_STORAGE_KEY);
+    if (storedEndpoints) {
+      const endpoints: ApiEndpoint[] = JSON.parse(storedEndpoints);
+      return endpoints.find(ep => ep.path === pathKey && ep.method === method);
+    }
+  } catch (error) {
+    console.error("Error retrieving API endpoint from localStorage:", error);
+  }
+  return undefined;
+};
 
 export default function AccuracyChecker() {
   const [manualJson, setManualJson] = useState<string>('');
@@ -38,13 +62,30 @@ export default function AccuracyChecker() {
       });
       return;
     }
+
+    const compareEndpoint = getApiEndpoint('/compare', 'POST');
+    if (!compareEndpoint) {
+      toast({
+        title: 'API Endpoint Not Configured',
+        description: "The '/compare' (POST) endpoint is not defined in API Docs. Please configure it to proceed.",
+        variant: 'destructive',
+        duration: 7000,
+      });
+      return;
+    }
     
     setIsLoading(true);
     setComparisonResult(null);
 
     try {
+      toast({
+        title: 'Simulating Comparison',
+        description: `Using endpoint: POST ${compareEndpoint.path}`,
+        variant: 'default',
+      });
+      // Actual call would use compareEndpoint.path
       const input: CompareJsonAccuracyInput = { manualJson, aiJson };
-      const result = await compareJsonAccuracy(input);
+      const result = await compareJsonAccuracy(input); // This is the Genkit flow call
       setComparisonResult(result);
       toast({
         title: 'Comparison Complete',
@@ -75,6 +116,13 @@ export default function AccuracyChecker() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        <Alert variant="default" className="border-primary/30 bg-primary/5">
+            <AlertTriangle className="h-4 w-4 text-primary" />
+            <AlertDescription className="text-primary/90 text-xs">
+                Ensure the 'POST' endpoint for '/compare' is defined on the API Docs page for this feature to work.
+            </AlertDescription>
+        </Alert>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div>
             <Label htmlFor="manual-json" className="text-base font-semibold">Manually Created JSON</Label>

@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState, useEffect } from 'react';
@@ -10,11 +11,33 @@ import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const API_CONFIG_STORAGE_KEY = 'excelFlowApiConfig';
+const API_ENDPOINTS_STORAGE_KEY = 'excelFlowApiEndpoints'; // For endpoint definitions
 
 interface ApiConfig {
   openAIApiKey: string;
   azureApiKey: string;
 }
+
+interface ApiEndpoint {
+  id: string;
+  path: string;
+  method: 'GET' | 'POST' | 'DELETE';
+  description: string;
+}
+
+// Helper function to get API endpoint from localStorage
+const getApiEndpoint = (pathKey: string, method: 'GET' | 'POST' | 'DELETE'): ApiEndpoint | undefined => {
+  try {
+    const storedEndpoints = localStorage.getItem(API_ENDPOINTS_STORAGE_KEY);
+    if (storedEndpoints) {
+      const endpoints: ApiEndpoint[] = JSON.parse(storedEndpoints);
+      return endpoints.find(ep => ep.path === pathKey && ep.method === method);
+    }
+  } catch (error) {
+    console.error("Error retrieving API endpoint from localStorage:", error);
+  }
+  return undefined;
+};
 
 export default function ApiSettings() {
   const [config, setConfig] = useState<ApiConfig>({ openAIApiKey: '', azureApiKey: '' });
@@ -23,7 +46,6 @@ export default function ApiSettings() {
   const { toast } = useToast();
 
   useEffect(() => {
-    // Load config from localStorage on mount
     const storedConfig = localStorage.getItem(API_CONFIG_STORAGE_KEY);
     if (storedConfig) {
       try {
@@ -46,6 +68,7 @@ export default function ApiSettings() {
 
   const handleSaveConfig = () => {
     setIsLoading(true);
+    // Note: This saves API keys to localStorage. For production, consider a backend for `/config/update`.
     try {
       localStorage.setItem(API_CONFIG_STORAGE_KEY, JSON.stringify(config));
       toast({
@@ -66,22 +89,40 @@ export default function ApiSettings() {
   };
   
   const handleValidateKeys = () => {
+    const validateEndpoint = getApiEndpoint('/config/validate', 'POST');
+    if (!validateEndpoint) {
+      toast({
+        title: 'API Endpoint Not Configured',
+        description: "The '/config/validate' (POST) endpoint is not defined in API Docs. Please configure it to proceed.",
+        variant: 'destructive',
+        duration: 7000,
+      });
+      return;
+    }
+
     setIsValidating(true);
+    toast({
+      title: 'Simulating Key Validation',
+      description: `Using endpoint: POST ${validateEndpoint.path}`,
+      variant: 'default',
+    });
+
     // Simulate API key validation
     setTimeout(() => {
       setIsValidating(false);
       const { openAIApiKey, azureApiKey } = config;
-      if (openAIApiKey && azureApiKey) { // Simple check, replace with actual validation
+      // In a real scenario, you'd send these keys to `validateEndpoint.path`
+      if (openAIApiKey && azureApiKey) { 
          toast({
-          title: 'API Keys Validated',
-          description: 'Both OpenAI and Azure API keys appear to be valid (mock validation).',
+          title: 'API Keys Validated (Simulated)',
+          description: 'Both OpenAI and Azure API keys appear to be valid.',
           variant: 'default',
           className: 'bg-accent text-accent-foreground',
         });
       } else {
          toast({
-          title: 'Validation Incomplete',
-          description: 'One or more API keys are missing or invalid (mock validation).',
+          title: 'Validation Incomplete (Simulated)',
+          description: 'One or more API keys are missing or appear invalid.',
           variant: 'destructive',
         });
       }
@@ -104,7 +145,6 @@ export default function ApiSettings() {
       reader.onload = (e) => {
         try {
           const importedConfig = JSON.parse(e.target?.result as string);
-          // Add some validation for imported structure if needed
           if (typeof importedConfig.openAIApiKey === 'string' && typeof importedConfig.azureApiKey === 'string') {
             setConfig(importedConfig);
             toast({ title: "Configuration Imported", description: "Settings loaded from file.", className: "bg-accent text-accent-foreground" });
@@ -117,7 +157,6 @@ export default function ApiSettings() {
       };
       reader.readAsText(file);
     }
-     // Reset file input to allow re-uploading the same file
     if (event.target) {
         event.target.value = "";
     }
@@ -131,15 +170,15 @@ export default function ApiSettings() {
           <KeyRound className="mr-2 h-6 w-6 text-primary" /> API Key Management
         </CardTitle>
         <CardDescription>
-          Configure API keys for external services. Keys are stored locally in your browser.
+          Configure API keys for external services. Keys are stored locally in your browser. Validation uses endpoints from API Docs.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <Alert variant="default" className="bg-primary/10 border-primary/30">
           <AlertTriangle className="h-5 w-5 text-primary" />
-          <AlertTitle className="font-semibold text-primary">Security Notice</AlertTitle>
+          <AlertTitle className="font-semibold text-primary">Security Notice &amp; API Docs</AlertTitle>
           <AlertDescription>
-            API keys are stored in your browser's local storage. For production environments, consider more secure key management solutions.
+            API keys are stored in your browser's local storage. For key validation, ensure the 'POST' endpoint for '/config/validate' is defined on the API Docs page.
           </AlertDescription>
         </Alert>
 

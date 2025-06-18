@@ -1,3 +1,4 @@
+
 'use client';
 
 import { useState } from 'react';
@@ -6,8 +7,32 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { PlayCircle, Settings2, Loader2 } from 'lucide-react';
+import { PlayCircle, Settings2, Loader2, AlertTriangle } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { Alert, AlertDescription } from "@/components/ui/alert";
+
+// Interface and constant for API endpoint configuration
+interface ApiEndpoint {
+  id: string;
+  path: string;
+  method: 'GET' | 'POST' | 'DELETE';
+  description: string;
+}
+const API_ENDPOINTS_STORAGE_KEY = 'excelFlowApiEndpoints';
+
+// Helper function to get API endpoint from localStorage
+const getApiEndpoint = (pathKey: string, method: 'GET' | 'POST' | 'DELETE'): ApiEndpoint | undefined => {
+  try {
+    const storedEndpoints = localStorage.getItem(API_ENDPOINTS_STORAGE_KEY);
+    if (storedEndpoints) {
+      const endpoints: ApiEndpoint[] = JSON.parse(storedEndpoints);
+      return endpoints.find(ep => ep.path === pathKey && ep.method === method);
+    }
+  } catch (error) {
+    console.error("Error retrieving API endpoint from localStorage:", error);
+  }
+  return undefined;
+};
 
 export default function PipelineSettingsSection() {
   const [runName, setRunName] = useState<string>('');
@@ -25,12 +50,30 @@ export default function PipelineSettingsSection() {
       });
       return;
     }
+
+    const processEndpoint = getApiEndpoint('/process', 'POST');
+    if (!processEndpoint) {
+      toast({
+        title: 'API Endpoint Not Configured',
+        description: "The '/process' (POST) endpoint is not defined in API Docs. Please configure it to execute the pipeline.",
+        variant: 'destructive',
+        duration: 7000,
+      });
+      return;
+    }
+
     setIsExecuting(true);
+    toast({
+      title: "Simulating Pipeline Execution",
+      description: `Run "${runName}" using endpoint: POST ${processEndpoint.path}`,
+      variant: "default",
+    });
+
     // Simulate pipeline execution
     setTimeout(() => {
       setIsExecuting(false);
       toast({
-        title: "Pipeline Executed",
+        title: "Pipeline Executed (Simulated)",
         description: `Run "${runName}" completed successfully.`,
         variant: "default",
         className: "bg-accent text-accent-foreground"
@@ -48,9 +91,15 @@ export default function PipelineSettingsSection() {
         <CardTitle className="font-headline text-xl flex items-center">
           <Settings2 className="mr-2 h-6 w-6 text-primary" /> Pipeline Execution &amp; Settings
         </CardTitle>
-        <CardDescription>Configure and start your Excel processing pipeline.</CardDescription>
+        <CardDescription>Configure and start your Excel processing pipeline. Uses endpoints from API Docs.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
+        <Alert variant="default" className="border-primary/30 bg-primary/5">
+            <AlertTriangle className="h-4 w-4 text-primary" />
+            <AlertDescription className="text-primary/90 text-xs">
+                Ensure the 'POST' endpoint for '/process' is defined on the API Docs page for pipeline execution.
+            </AlertDescription>
+        </Alert>
         <div>
           <Label htmlFor="run-name" className="text-base font-semibold">Run Name</Label>
           <Input
