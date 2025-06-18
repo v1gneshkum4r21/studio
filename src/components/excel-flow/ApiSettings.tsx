@@ -6,16 +6,31 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Save, KeyRound, CheckCircle, AlertTriangle, Loader2, Upload, Download } from 'lucide-react';
+import { Save, KeyRound, CheckCircle, AlertTriangle, Loader2, Upload, Download, Settings } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Separator } from '@/components/ui/separator';
 
 const API_CONFIG_STORAGE_KEY = 'excelFlowApiConfig';
 const API_ENDPOINTS_STORAGE_KEY = 'excelFlowApiEndpoints'; // For endpoint definitions
 
 interface ApiConfig {
   openAIApiKey: string;
-  azureApiKey: string;
+  azureApiKey: string; // Existing generic Azure Key
+
+  // Azure OpenAI gpt-4o-mini
+  azureOpenAIApiKey_Gpt4oMini: string;
+  azureOpenAIApiBaseUrl_Gpt4oMini: string;
+  azureOpenAIApiVersion_Gpt4oMini: string;
+  azureOpenAIGpt4DeploymentName_Gpt4oMini: string;
+  azureOpenAIEmbeddingDeploymentName_Gpt4oMini: string;
+
+  // Azure OpenAI gpt-3.5-turbo
+  azureOpenAIApiKey_Gpt35Turbo: string;
+  azureOpenAIApiBaseUrl_Gpt35Turbo: string;
+  azureOpenAIGpt4DeploymentName_Gpt35Turbo: string;
+  azureOpenAIChatGptDeploymentName_Gpt35Turbo: string;
+  azureOpenAIApiVersion_Gpt35Turbo: string;
 }
 
 interface ApiEndpoint {
@@ -39,8 +54,23 @@ const getApiEndpoint = (pathKey: string, method: 'GET' | 'POST' | 'DELETE'): Api
   return undefined;
 };
 
+const initialConfig: ApiConfig = {
+  openAIApiKey: '',
+  azureApiKey: '',
+  azureOpenAIApiKey_Gpt4oMini: '',
+  azureOpenAIApiBaseUrl_Gpt4oMini: '',
+  azureOpenAIApiVersion_Gpt4oMini: '',
+  azureOpenAIGpt4DeploymentName_Gpt4oMini: '',
+  azureOpenAIEmbeddingDeploymentName_Gpt4oMini: '',
+  azureOpenAIApiKey_Gpt35Turbo: '',
+  azureOpenAIApiBaseUrl_Gpt35Turbo: '',
+  azureOpenAIGpt4DeploymentName_Gpt35Turbo: '',
+  azureOpenAIChatGptDeploymentName_Gpt35Turbo: '',
+  azureOpenAIApiVersion_Gpt35Turbo: '',
+};
+
 export default function ApiSettings() {
-  const [config, setConfig] = useState<ApiConfig>({ openAIApiKey: '', azureApiKey: '' });
+  const [config, setConfig] = useState<ApiConfig>(initialConfig);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isValidating, setIsValidating] = useState<boolean>(false);
   const { toast } = useToast();
@@ -49,7 +79,8 @@ export default function ApiSettings() {
     const storedConfig = localStorage.getItem(API_CONFIG_STORAGE_KEY);
     if (storedConfig) {
       try {
-        setConfig(JSON.parse(storedConfig));
+        const parsedConfig = JSON.parse(storedConfig);
+        setConfig(prevConfig => ({ ...prevConfig, ...parsedConfig }));
       } catch (e) {
         console.error("Failed to parse stored API config", e);
         toast({
@@ -68,7 +99,6 @@ export default function ApiSettings() {
 
   const handleSaveConfig = () => {
     setIsLoading(true);
-    // Note: This saves API keys to localStorage. For production, consider a backend for `/config/update`.
     try {
       localStorage.setItem(API_CONFIG_STORAGE_KEY, JSON.stringify(config));
       toast({
@@ -103,26 +133,25 @@ export default function ApiSettings() {
     setIsValidating(true);
     toast({
       title: 'Simulating Key Validation',
-      description: `Using endpoint: POST ${validateEndpoint.path}`,
+      description: `Using endpoint: POST ${validateEndpoint.path}. This is a simulation.`,
       variant: 'default',
     });
 
-    // Simulate API key validation
     setTimeout(() => {
       setIsValidating(false);
-      const { openAIApiKey, azureApiKey } = config;
-      // In a real scenario, you'd send these keys to `validateEndpoint.path`
-      if (openAIApiKey && azureApiKey) { 
+      // Basic check if any key is filled - in a real app, this would be an API call
+      const hasSomeKeys = Object.values(config).some(value => typeof value === 'string' && value.trim() !== '');
+      if (hasSomeKeys) { 
          toast({
           title: 'API Keys Validated (Simulated)',
-          description: 'Both OpenAI and Azure API keys appear to be valid.',
+          description: 'At least one API key field has a value. Further validation would occur server-side.',
           variant: 'default',
           className: 'bg-accent text-accent-foreground',
         });
       } else {
          toast({
           title: 'Validation Incomplete (Simulated)',
-          description: 'One or more API keys are missing or appear invalid.',
+          description: 'No API keys seem to be entered.',
           variant: 'destructive',
         });
       }
@@ -145,8 +174,9 @@ export default function ApiSettings() {
       reader.onload = (e) => {
         try {
           const importedConfig = JSON.parse(e.target?.result as string);
-          if (typeof importedConfig.openAIApiKey === 'string' && typeof importedConfig.azureApiKey === 'string') {
-            setConfig(importedConfig);
+          // Simple validation, ensure it's an object
+          if (typeof importedConfig === 'object' && importedConfig !== null) {
+            setConfig(prev => ({...prev, ...importedConfig})); // Merge with existing to preserve all keys
             toast({ title: "Configuration Imported", description: "Settings loaded from file.", className: "bg-accent text-accent-foreground" });
           } else {
             throw new Error("Invalid config file structure");
@@ -178,13 +208,13 @@ export default function ApiSettings() {
           <AlertTriangle className="h-5 w-5 text-primary" />
           <AlertTitle className="font-semibold text-primary">Security Notice &amp; API Docs</AlertTitle>
           <AlertDescription>
-            API keys are stored in your browser's local storage. For key validation, ensure the 'POST' endpoint for '/config/validate' is defined on the API Docs page.
+            API keys are stored in your browser's local storage. For key validation and other operations, ensure relevant endpoints (e.g., '/config/validate') are defined on the API Docs page.
           </AlertDescription>
         </Alert>
 
         <div className="space-y-4">
           <div>
-            <Label htmlFor="openAIApiKey" className="text-base font-semibold">OpenAI API Key</Label>
+            <Label htmlFor="openAIApiKey" className="text-base font-semibold">OpenAI API Key (Generic)</Label>
             <Input
               id="openAIApiKey"
               name="openAIApiKey"
@@ -196,7 +226,7 @@ export default function ApiSettings() {
             />
           </div>
           <div>
-            <Label htmlFor="azureApiKey" className="text-base font-semibold">Azure API Key (Optional)</Label>
+            <Label htmlFor="azureApiKey" className="text-base font-semibold">Azure API Key (Generic/Optional)</Label>
             <Input
               id="azureApiKey"
               name="azureApiKey"
@@ -209,7 +239,64 @@ export default function ApiSettings() {
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row justify-end gap-3 mt-4">
+        <Separator className="my-6" />
+
+        <div>
+            <h3 className="text-lg font-headline flex items-center mb-3"><Settings className="mr-2 h-5 w-5 text-primary/80" /> Azure OpenAI GPT-4o-mini Settings</h3>
+            <div className="space-y-4 pl-2 border-l-2 border-primary/30 ml-1">
+                 <div>
+                    <Label htmlFor="azureOpenAIApiKey_Gpt4oMini">API Key</Label>
+                    <Input id="azureOpenAIApiKey_Gpt4oMini" name="azureOpenAIApiKey_Gpt4oMini" type="password" placeholder="Azure OpenAI API Key" value={config.azureOpenAIApiKey_Gpt4oMini} onChange={handleInputChange} className="mt-1" />
+                </div>
+                <div>
+                    <Label htmlFor="azureOpenAIApiBaseUrl_Gpt4oMini">API Base URL</Label>
+                    <Input id="azureOpenAIApiBaseUrl_Gpt4oMini" name="azureOpenAIApiBaseUrl_Gpt4oMini" placeholder="e.g., https://your-resource.openai.azure.com" value={config.azureOpenAIApiBaseUrl_Gpt4oMini} onChange={handleInputChange} className="mt-1" />
+                </div>
+                <div>
+                    <Label htmlFor="azureOpenAIApiVersion_Gpt4oMini">API Version</Label>
+                    <Input id="azureOpenAIApiVersion_Gpt4oMini" name="azureOpenAIApiVersion_Gpt4oMini" placeholder="e.g., 2024-02-15-preview" value={config.azureOpenAIApiVersion_Gpt4oMini} onChange={handleInputChange} className="mt-1" />
+                </div>
+                <div>
+                    <Label htmlFor="azureOpenAIGpt4DeploymentName_Gpt4oMini">GPT-4o Mini Deployment Name</Label>
+                    <Input id="azureOpenAIGpt4DeploymentName_Gpt4oMini" name="azureOpenAIGpt4DeploymentName_Gpt4oMini" placeholder="Your GPT-4o Mini deployment name" value={config.azureOpenAIGpt4DeploymentName_Gpt4oMini} onChange={handleInputChange} className="mt-1" />
+                </div>
+                <div>
+                    <Label htmlFor="azureOpenAIEmbeddingDeploymentName_Gpt4oMini">Embedding Deployment Name</Label>
+                    <Input id="azureOpenAIEmbeddingDeploymentName_Gpt4oMini" name="azureOpenAIEmbeddingDeploymentName_Gpt4oMini" placeholder="Your Embedding deployment name" value={config.azureOpenAIEmbeddingDeploymentName_Gpt4oMini} onChange={handleInputChange} className="mt-1" />
+                </div>
+            </div>
+        </div>
+
+        <Separator className="my-6" />
+
+        <div>
+            <h3 className="text-lg font-headline flex items-center mb-3"><Settings className="mr-2 h-5 w-5 text-primary/80" /> Azure OpenAI GPT-3.5-turbo Settings</h3>
+            <div className="space-y-4 pl-2 border-l-2 border-primary/30 ml-1">
+                <div>
+                    <Label htmlFor="azureOpenAIApiKey_Gpt35Turbo">API Key</Label>
+                    <Input id="azureOpenAIApiKey_Gpt35Turbo" name="azureOpenAIApiKey_Gpt35Turbo" type="password" placeholder="Azure OpenAI API Key" value={config.azureOpenAIApiKey_Gpt35Turbo} onChange={handleInputChange} className="mt-1" />
+                </div>
+                <div>
+                    <Label htmlFor="azureOpenAIApiBaseUrl_Gpt35Turbo">API Base URL</Label>
+                    <Input id="azureOpenAIApiBaseUrl_Gpt35Turbo" name="azureOpenAIApiBaseUrl_Gpt35Turbo" placeholder="e.g., https://your-resource.openai.azure.com" value={config.azureOpenAIApiBaseUrl_Gpt35Turbo} onChange={handleInputChange} className="mt-1" />
+                </div>
+                 <div>
+                    <Label htmlFor="azureOpenAIApiVersion_Gpt35Turbo">API Version</Label>
+                    <Input id="azureOpenAIApiVersion_Gpt35Turbo" name="azureOpenAIApiVersion_Gpt35Turbo" placeholder="e.g., 2023-03-15-preview" value={config.azureOpenAIApiVersion_Gpt35Turbo} onChange={handleInputChange} className="mt-1" />
+                </div>
+                <div>
+                    <Label htmlFor="azureOpenAIGpt4DeploymentName_Gpt35Turbo">GPT-4 Deployment Name (Turbo context)</Label>
+                    <Input id="azureOpenAIGpt4DeploymentName_Gpt35Turbo" name="azureOpenAIGpt4DeploymentName_Gpt35Turbo" placeholder="Optional GPT-4 deployment for Turbo" value={config.azureOpenAIGpt4DeploymentName_Gpt35Turbo} onChange={handleInputChange} className="mt-1" />
+                </div>
+                <div>
+                    <Label htmlFor="azureOpenAIChatGptDeploymentName_Gpt35Turbo">Chat Deployment Name (Turbo)</Label>
+                    <Input id="azureOpenAIChatGptDeploymentName_Gpt35Turbo" name="azureOpenAIChatGptDeploymentName_Gpt35Turbo" placeholder="Your GPT-3.5-Turbo deployment name" value={config.azureOpenAIChatGptDeploymentName_Gpt35Turbo} onChange={handleInputChange} className="mt-1" />
+                </div>
+            </div>
+        </div>
+
+
+        <div className="flex flex-col sm:flex-row justify-end gap-3 mt-8 pt-6 border-t">
           <Button variant="outline" onClick={handleValidateKeys} disabled={isValidating || isLoading} className="w-full sm:w-auto">
             {isValidating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
             {isValidating ? 'Validating...' : 'Validate Keys'}
@@ -225,7 +312,7 @@ export default function ApiSettings() {
                 <Download className="mr-2 h-4 w-4" /> Export Config
             </Button>
             <Button variant="outline" asChild className="w-full sm:w-auto">
-              <Label htmlFor="import-config-input">
+              <Label htmlFor="import-config-input" className="cursor-pointer">
                 <Upload className="mr-2 h-4 w-4" /> Import Config
                 <Input id="import-config-input" type="file" accept=".json" onChange={handleImportConfig} className="hidden" />
               </Label>
@@ -235,3 +322,4 @@ export default function ApiSettings() {
     </Card>
   );
 }
+
