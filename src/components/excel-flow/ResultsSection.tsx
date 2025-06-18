@@ -7,20 +7,34 @@ import { Button } from '@/components/ui/button';
 import { Download, FileArchive, FileText, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import type { Progress } from "@/components/ui/progress"; // Only if using progress bar
+import { Progress } from "@/components/ui/progress";
 
-interface ResultFile { // Represents a file listed in the results
-  id: string; // Could be filename or a unique ID if backend provides
+interface ResultFile { 
+  id: string; 
   name: string;
-  type?: string; // e.g. 'Excel', 'JSON', 'Log' - derived from filename or backend
-  path?: string; // Full path/identifier for download if different from name
+  type?: string; 
+  path: string; // Backend provides path relative to run for download
 }
 
-interface ResultsData { // Structure matching FastAPI's ResultsResponse (simplified)
+// Corresponds to FastAPI's StatusResponse
+interface BackendStatusResponse {
+  run_id: string;
+  status: string; // "queued", "processing", "completed", "failed"
+  progress: number;
+  current_stage: string;
+  start_time: string; // ISO datetime string
+  elapsed: string;
+}
+
+// Corresponds to FastAPI's ResultsResponse
+interface BackendResultsResponse {
+  run_id: string;
   status: string;
-  completion_time?: string;
-  outputs: Record<string, Record<string, string>>; // {template: {file_type: path_or_filename}}
-  metrics?: Record<string, any>;
+  completion_time?: string; // ISO datetime string
+  templates: string[];
+  vendor: string;
+  outputs: Record<string, Record<string, string>>; // {template_filename: {file_type: output_filename_or_path}}
+  metrics: Record<string, any>;
 }
 
 interface ApiEndpoint {
@@ -30,13 +44,15 @@ interface ApiEndpoint {
   description: string;
 }
 const API_ENDPOINTS_STORAGE_KEY = 'excelFlowApiEndpoints';
+const FASTAPI_BASE_URL = 'http://localhost:8000';
 
 const getApiEndpoint = (pathKey: string, method: 'GET' | 'POST' | 'DELETE'): ApiEndpoint | undefined => {
   try {
     const storedEndpoints = localStorage.getItem(API_ENDPOINTS_STORAGE_KEY);
     if (storedEndpoints) {
       const endpoints: ApiEndpoint[] = JSON.parse(storedEndpoints);
-      return endpoints.find(ep => (ep.path === pathKey || pathKey.startsWith(ep.path.split(':')[0])) && ep.method === method);
+      // Find endpoint where pathKey starts with the defined path (to handle route params like /status/:run_id)
+      return endpoints.find(ep => pathKey.startsWith(ep.path.split(':')[0].split('{')[0]) && ep.method === method);
     }
   } catch (error) {
     console.error("Error retrieving API endpoint from localStorage:", error);
@@ -47,7 +63,7 @@ const getApiEndpoint = (pathKey: string, method: 'GET' | 'POST' | 'DELETE'): Api
 const fillPathParameters = (pathWithParams: string, params: Record<string, string>): string => {
   let path = pathWithParams;
   for (const key in params) {
-    path = path.replace(`:${key}`, params[key]);
+    path = path.replace(`:${key}`, params[key]).replace(`{${key}}`, params[key]);
   }
   return path;
 };
@@ -57,49 +73,49 @@ interface ResultsSectionProps {
 }
 
 export default function ResultsSection({ runId }: ResultsSectionProps) {
-  const [resultsData, setResultsData] = useState<ResultsData | null>(null);
+  const [resultsData, setResultsData] = useState<BackendResultsResponse | null>(null);
   const [displayedFiles, setDisplayedFiles] = useState<ResultFile[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isDownloadingAll, setIsDownloadingAll] = useState<boolean>(false);
-  const [currentRunStatus, setCurrentRunStatus] = useState<string | null>(null);
-  const [progress, setProgress] = useState<number>(0); // For polling status
+  const [currentRunStatusMessage, setCurrentRunStatusMessage] = useState<string | null>(null);
+  const [currentProgress, setCurrentProgress] = useState<number>(0);
   const { toast } = useToast();
 
-  const fetchRunStatus = useCallback(async (currentRunId: string) => {
-    const statusEndpointConfig = getApiEndpoint('/status/:run_id', 'GET');
+  const fetchRunStatus = useCallback(async (currentRunId: string): Promise<string | null> => {
+    const statusEndpointConfig = getApiEndpoint('/status/:run_id', 'GET'); // Path key from API Docs
     if (!statusEndpointConfig) {
-      // Don't toast every poll, just set status
-      setCurrentRunStatus("Status endpoint not configured");
-      return;
+      setCurrentRunStatusMessage("Status endpoint '/status/:run_id' not configured in API Docs.");
+      return 'config_error';
     }
     const actualPath = fillPathParameters(statusEndpointConfig.path, { run_id: currentRunId });
+    
     try {
-      const response = await fetch(`http://localhost:8000${actualPath}`);
+      const response = await fetch(`${FASTAPI_BASE_URL}${actualPath}`);
       if (!response.ok) {
         const error = await response.json().catch(() => ({ detail: "Failed to fetch status"}));
         throw new Error(error.detail);
       }
-      const statusData = await response.json();
-      setCurrentRunStatus(`${statusData.current_stage} (${statusData.progress}%)`);
-      setProgress(statusData.progress);
-      if (statusData.status === 'completed') {
-        return 'completed';
-      }
+      const statusData: BackendStatusResponse = await response.json();
+      setCurrentRunStatusMessage(`Status: ${statusData.status} - ${statusData.current_stage} (${statusData.progress}%)`);
+      setCurrentProgress(statusData.progress);
+      
+      if (statusData.status === 'completed') return 'completed';
       if (statusData.status === 'failed') {
-        toast({ title: "Processing Failed", description: `Run ${currentRunId} failed. Check logs.`, variant: "destructive" });
+        toast({ title: "Processing Failed", description: `Run ${currentRunId} failed. Stage: ${statusData.current_stage}`, variant: "destructive" });
         return 'failed';
       }
+      return statusData.status; // "processing", "queued"
     } catch (error: any) {
-      setCurrentRunStatus("Error fetching status");
-      // Don't toast every poll on error
+      setCurrentRunStatusMessage(`Error fetching status: ${error.message}`);
+      // Don't toast every poll on error to avoid spam
+      return 'error';
     }
-    return null; // Still processing or error
   }, [toast]);
 
 
   const fetchResults = useCallback(async (currentRunId: string) => {
     setIsLoading(true);
-    setCurrentRunStatus("Fetching results...");
+    setCurrentRunStatusMessage("Fetching final results...");
     const resultsEndpointConfig = getApiEndpoint('/results/:run_id', 'GET');
     if (!resultsEndpointConfig) {
       toast({
@@ -109,39 +125,44 @@ export default function ResultsSection({ runId }: ResultsSectionProps) {
         duration: 7000,
       });
       setIsLoading(false);
-      setCurrentRunStatus(null);
+      setCurrentRunStatusMessage(null);
       return;
     }
     const actualPath = fillPathParameters(resultsEndpointConfig.path, { run_id: currentRunId });
 
     try {
-      const response = await fetch(`http://localhost:8000${actualPath}`);
+      const response = await fetch(`${FASTAPI_BASE_URL}${actualPath}`);
       if (!response.ok) {
          const errorData = await response.json().catch(() => ({detail: "Failed to fetch results."}));
         throw new Error(errorData.detail || `Failed to fetch results. Status: ${response.status}`);
       }
-      const data: ResultsData = await response.json();
+      const data: BackendResultsResponse = await response.json();
       setResultsData(data);
 
       const files: ResultFile[] = [];
       if (data.outputs) {
-        Object.entries(data.outputs).forEach(([templateName, fileTypes]) => {
-          Object.entries(fileTypes).forEach(([fileType, filePathOrName]) => {
-            // Assuming filePathOrName is the actual filename for download
-            const fileName = filePathOrName.substring(filePathOrName.lastIndexOf('/') + 1);
+        // FastAPI outputs: {template_filename: {file_type: output_filename_or_path_relative_to_run}}
+        Object.entries(data.outputs).forEach(([templateName, fileTypeMap]) => {
+          Object.entries(fileTypeMap).forEach(([fileType, backendFilePath]) => {
+            // backendFilePath is like "/runs/{run_id}/{template_name}_{file_type}_{timestamp}.json"
+            // We need just the filename for download
+            const filename = backendFilePath.substring(backendFilePath.lastIndexOf('/') + 1);
             files.push({
-              id: `${templateName}_${fileType}_${fileName}`,
-              name: fileName, // Display name
-              path: fileName, // Used for download function
-              type: fileType,
+              id: `${currentRunId}_${templateName}_${fileType}_${filename}`, // Unique ID for UI
+              name: filename, 
+              path: filename, // The filename is what /download/:run_id/:filename expects
+              type: fileType.toUpperCase(),
             });
           });
         });
       }
       setDisplayedFiles(files);
-      setCurrentRunStatus("Results loaded.");
-      toast({ title: "Results Loaded", description: `Results for run ${currentRunId} fetched successfully.`, variant: "default" });
+      setCurrentRunStatusMessage(data.status === 'completed' ? "Results loaded successfully." : `Status: ${data.status}`);
+      if (data.status === 'completed') {
+        toast({ title: "Results Loaded", description: `Results for run ${currentRunId} fetched.`, variant: "default" });
+      }
     } catch (error: any) {
+      console.error('Error fetching results:', error);
       toast({
         title: 'Error Fetching Results',
         description: error.message || 'An unexpected error occurred.',
@@ -149,42 +170,48 @@ export default function ResultsSection({ runId }: ResultsSectionProps) {
       });
       setResultsData(null);
       setDisplayedFiles([]);
-      setCurrentRunStatus("Failed to load results.");
+      setCurrentRunStatusMessage("Failed to load results.");
     } finally {
       setIsLoading(false);
     }
   }, [toast]);
 
  useEffect(() => {
+    let pollTimeout: NodeJS.Timeout;
     if (runId) {
       setIsLoading(true);
       setResultsData(null);
       setDisplayedFiles([]);
-      setCurrentRunStatus("Processing started...");
-      setProgress(0);
+      setCurrentRunStatusMessage("Processing initiated...");
+      setCurrentProgress(0);
 
       const pollStatus = async () => {
-        const status = await fetchRunStatus(runId);
-        if (status === 'completed') {
-          fetchResults(runId); // Fetch final results
-          return; // Stop polling
+        const statusResult = await fetchRunStatus(runId);
+        if (statusResult === 'completed') {
+          fetchResults(runId); 
+          return; 
         }
-        if (status === 'failed') {
-          setIsLoading(false); // Stop loading indicator
-          return; // Stop polling
+        if (statusResult === 'failed' || statusResult === 'error' || statusResult === 'config_error') {
+          setIsLoading(false); 
+          if (statusResult !== 'error' && statusResult !== 'config_error') { // Don't toast for intermittent poll errors
+            setCurrentRunStatusMessage(prev => prev || "Run failed or encountered an error.");
+          }
+          return; 
         }
-        // If still processing, poll again
-        if (runId) { // Check runId again because it might change
-            setTimeout(pollStatus, 3000); // Poll every 3 seconds
+        // If still processing or queued, poll again
+        if (runId) { 
+            pollTimeout = setTimeout(pollStatus, 3000); 
         }
       };
       pollStatus();
+      
+      return () => clearTimeout(pollTimeout); // Cleanup timeout on unmount or runId change
     } else {
       setResultsData(null);
       setDisplayedFiles([]);
       setIsLoading(false);
-      setCurrentRunStatus(null);
-      setProgress(0);
+      setCurrentRunStatusMessage(null);
+      setCurrentProgress(0);
     }
   }, [runId, fetchRunStatus, fetchResults]);
 
@@ -201,26 +228,28 @@ export default function ResultsSection({ runId }: ResultsSectionProps) {
       });
       return;
     }
+    // FastAPI path: /download/{run_id}/{filename}
     const actualPath = fillPathParameters(downloadFileEndpointConfig.path, { run_id: runId, filename: fileNameToDownload });
     
     try {
       toast({ title: `Preparing Download: ${fileNameToDownload}`, variant: "default" });
-      const response = await fetch(`http://localhost:8000${actualPath}`);
+      const response = await fetch(`${FASTAPI_BASE_URL}${actualPath}`);
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({detail: `Failed to download ${fileNameToDownload}`}));
-        throw new Error(errorData.detail || `Download failed. Status: ${response.status}`);
+        throw new Error(errorData.detail || `Download failed for ${fileNameToDownload}. Status: ${response.status}`);
       }
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = fileNameToDownload;
+      a.download = fileNameToDownload; // The actual filename from path
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
       toast({ title: "Download Started", description: `${fileNameToDownload} is downloading.`, className: "bg-accent text-accent-foreground" });
     } catch (error: any) {
+       console.error('Download error:', error);
        toast({ title: "Download Failed", description: error.message, variant: "destructive" });
     }
   };
@@ -242,7 +271,7 @@ export default function ResultsSection({ runId }: ResultsSectionProps) {
     const actualPath = fillPathParameters(downloadZipEndpointConfig.path, { run_id: runId });
     try {
       toast({ title: "Preparing Zip Archive", description: "This may take a moment...", variant: "default" });
-      const response = await fetch(`http://localhost:8000${actualPath}`);
+      const response = await fetch(`${FASTAPI_BASE_URL}${actualPath}`);
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({detail: "Failed to download zip archive"}));
         throw new Error(errorData.detail || `Zip download failed. Status: ${response.status}`);
@@ -258,6 +287,7 @@ export default function ResultsSection({ runId }: ResultsSectionProps) {
       window.URL.revokeObjectURL(url);
       toast({ title: "Archive Download Started", description: `onboarding_results_${runId}.zip is downloading.`, className: "bg-accent text-accent-foreground"});
     } catch (error: any) {
+      console.error('Zip download error:', error);
       toast({ title: "Archive Download Failed", description: error.message, variant: "destructive" });
     } finally {
       setIsDownloadingAll(false);
@@ -289,12 +319,10 @@ export default function ResultsSection({ runId }: ResultsSectionProps) {
           <FileArchive className="mr-2 h-6 w-6 text-primary" /> Results for Run: <span className="ml-2 font-code text-lg truncate">{runId}</span>
         </CardTitle>
         <CardDescription>Download processed files. API endpoints from API Docs. Ensure FastAPI server is running with CORS.</CardDescription>
-         {isLoading && <div className="flex items-center text-sm text-muted-foreground mt-2"><Loader2 className="h-4 w-4 animate-spin mr-2" /> {currentRunStatus || "Loading..."}</div>}
-         {!isLoading && currentRunStatus && <div className="text-sm text-muted-foreground mt-2">{currentRunStatus}</div>}
-         {progress > 0 && progress < 100 && isLoading && (
-            <div className="w-full bg-muted rounded-full h-2.5 mt-2">
-                <div className="bg-primary h-2.5 rounded-full" style={{ width: `${progress}%` }}></div>
-            </div>
+         {(isLoading || (currentProgress > 0 && currentProgress < 100)) && <div className="flex items-center text-sm text-muted-foreground mt-2"><Loader2 className="h-4 w-4 animate-spin mr-2" /> {currentRunStatusMessage || "Loading..."}</div>}
+         {!isLoading && currentRunStatusMessage && (!currentRunStatusMessage.includes("Processing") && !currentRunStatusMessage.includes("queued")) && <div className="text-sm text-muted-foreground mt-2">{currentRunStatusMessage}</div>}
+         {currentProgress > 0 && isLoading && ( // Show progress bar only while loading and progress is happening
+            <Progress value={currentProgress} className="w-full h-2.5 mt-2" />
          )}
       </CardHeader>
       <CardContent>
@@ -304,7 +332,7 @@ export default function ResultsSection({ runId }: ResultsSectionProps) {
                 Ensure 'GET' endpoints like '/results/:run_id', '/status/:run_id', '/download/:run_id/:filename', and '/download/zip/:run_id' are defined in API Docs.
             </AlertDescription>
         </Alert>
-        {isLoading && !resultsData && (
+        {isLoading && !resultsData && currentProgress < 100 && (
              <div className="flex items-center justify-center h-32">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 <p className="ml-2">Loading results for {runId}...</p>
@@ -313,9 +341,13 @@ export default function ResultsSection({ runId }: ResultsSectionProps) {
         {!isLoading && resultsData && resultsData.status === 'completed' && displayedFiles.length === 0 && (
           <p className="text-muted-foreground text-center py-4">No output files found for this run, though it completed.</p>
         )}
-        {!isLoading && resultsData && resultsData.status !== 'completed' && !currentRunStatus?.includes("Processing") && (
-            <p className="text-muted-foreground text-center py-4">Run {runId} status: {resultsData?.status || currentRunStatus || "Unknown"}. Results will appear once completed.</p>
+        {!isLoading && resultsData && resultsData.status !== 'completed' && !currentRunStatusMessage?.includes("Processing") && !currentRunStatusMessage?.includes("queued") && (
+            <p className="text-muted-foreground text-center py-4">Run {runId} status: {resultsData?.status || currentRunStatusMessage || "Unknown"}. Results will appear once completed.</p>
         )}
+         {!isLoading && !resultsData && currentRunStatusMessage && (currentRunStatusMessage.includes("failed") || currentRunStatusMessage.includes("Error")) && (
+             <p className="text-destructive text-center py-4">{currentRunStatusMessage}</p>
+         )}
+
 
         {displayedFiles.length > 0 && resultsData && resultsData.status === 'completed' && (
           <div className="space-y-3">
@@ -324,11 +356,11 @@ export default function ResultsSection({ runId }: ResultsSectionProps) {
                 <div className="flex items-center gap-3">
                   <FileText className="h-6 w-6 text-primary" />
                   <div>
-                    <p className="text-sm font-medium truncate" title={file.name}>{file.name}</p>
+                    <p className="text-sm font-medium truncate max-w-[200px] sm:max-w-[300px]" title={file.name}>{file.name}</p>
                     <p className="text-xs text-muted-foreground">{file.type}</p>
                   </div>
                 </div>
-                <Button variant="ghost" size="icon" onClick={() => handleDownloadFile(file.path || file.name)} aria-label={`Download ${file.name}`}>
+                <Button variant="ghost" size="icon" onClick={() => handleDownloadFile(file.path)} aria-label={`Download ${file.name}`}>
                   <Download className="h-5 w-5" />
                 </Button>
               </div>
@@ -341,19 +373,19 @@ export default function ResultsSection({ runId }: ResultsSectionProps) {
               )}
               {isDownloadingAll ? 'Preparing Archive...' : 'Download All as Zip'}
             </Button>
-            {resultsData.metrics && (
+            {resultsData.metrics && Object.keys(resultsData.metrics).length > 0 && (
                 <div className="mt-4 p-3 border rounded-md bg-secondary/30">
-                    <h4 className="font-semibold mb-2">Processing Metrics:</h4>
+                    <h4 className="font-semibold mb-2 text-md">Processing Metrics:</h4>
                     <ul className="text-xs space-y-1">
                     {Object.entries(resultsData.metrics).map(([key, value]) => (
-                        <li key={key}><strong>{key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:</strong> {typeof value === 'number' ? value.toLocaleString() : value}</li>
+                        <li key={key}><strong>{key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:</strong> {typeof value === 'number' ? value.toLocaleString() : String(value)}</li>
                     ))}
                     </ul>
                 </div>
             )}
           </div>
         )}
-         <Button variant="outline" size="sm" onClick={() => runId && fetchRunStatus(runId)} disabled={isLoading || !runId} className="w-full mt-4">
+         <Button variant="outline" size="sm" onClick={() => runId && (fetchRunStatus(runId).then(status => status === 'completed' && fetchResults(runId)))} disabled={isLoading || !runId} className="w-full mt-4">
             <RefreshCw className="mr-2 h-4 w-4" /> Refresh Status / Results
         </Button>
       </CardContent>

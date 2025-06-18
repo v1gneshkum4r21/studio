@@ -13,18 +13,22 @@ export default function HomePage() {
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
 
   const handleTemplatesUploaded = (files: UploadedBackendFile[]) => {
-    setUploadedTemplateFiles(files);
+    // Append to existing or replace, depending on desired logic. Here, we append.
+    setUploadedTemplateFiles(prev => [...prev, ...files]);
   };
 
   const handleVendorsUploaded = (files: UploadedBackendFile[]) => {
-    setUploadedVendorFiles(files);
+    // Assuming only one vendor file is primarily used by the backend based on ProcessRequest
+    // If multiple are uploaded, the backend /process endpoint takes a single vendor string.
+    // We'll store all, but PipelineSettingsSection will likely use the first or last.
+    setUploadedVendorFiles(prev => [...prev, ...files]);
   };
 
   const handlePipelineExecuted = (runId: string) => {
     setCurrentRunId(runId);
-    // Clear uploaded files after starting a run, as they are now processed
-    setUploadedTemplateFiles([]);
-    setUploadedVendorFiles([]);
+    // Optionally clear uploaded files from state if they are considered "consumed" by the run
+    // setUploadedTemplateFiles([]);
+    // setUploadedVendorFiles([]);
   };
 
   return (
@@ -40,11 +44,12 @@ export default function HomePage() {
             <FileUploadSection
               onTemplatesUploaded={handleTemplatesUploaded}
               onVendorsUploaded={handleVendorsUploaded}
-              key={currentRunId} // Re-mount to clear local files after execution
+              // Keying by currentRunId might not be desired if we want to stage files for multiple runs
+              // Consider removing the key or using a different strategy if files should persist across runs.
             />
             <PipelineSettingsSection
               templateFileIds={uploadedTemplateFiles.map(f => f.id)}
-              vendorFileIds={uploadedVendorFiles.map(f => f.id)}
+              vendorFileIds={uploadedVendorFiles.map(f => f.id)} // Pass all, component will select one for /process
               onPipelineExecuted={handlePipelineExecuted}
               hasFilesToProcess={uploadedTemplateFiles.length > 0 && uploadedVendorFiles.length > 0}
             />

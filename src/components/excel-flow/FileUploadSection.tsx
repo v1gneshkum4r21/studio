@@ -7,18 +7,17 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { UploadCloud, FileText, XCircle, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
-import { Progress } from '@/components/ui/progress';
+// import { Progress } from '@/components/ui/progress'; // Progress not used with direct uploads
 import { useToast } from '@/hooks/use-toast';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
 interface LocalFile {
-  id: string; // Used for UI key, e.g., file.name + Date.now()
+  id: string;
   name: string;
   size: number;
   type: string;
   fileObject: File;
-  progress?: number; // For local simulation if needed, or actual upload progress
 }
 
 export interface UploadedBackendFile {
@@ -34,6 +33,7 @@ interface ApiEndpoint {
 }
 
 const API_ENDPOINTS_STORAGE_KEY = 'excelFlowApiEndpoints';
+const FASTAPI_BASE_URL = 'http://localhost:8000';
 
 const getApiEndpoint = (pathKey: string, method: 'GET' | 'POST' | 'DELETE'): ApiEndpoint | undefined => {
   try {
@@ -73,11 +73,9 @@ export default function FileUploadSection({ onTemplatesUploaded, onVendorsUpload
         size: file.size,
         type: file.type,
         fileObject: file,
-        progress: 0,
       }));
       setFiles((prevFiles) => [...prevFiles, ...newFiles]);
     }
-     // Reset the input value to allow uploading the same file again
     if (event.target) {
       event.target.value = "";
     }
@@ -90,17 +88,17 @@ export default function FileUploadSection({ onTemplatesUploaded, onVendorsUpload
     setFiles((prevFiles) => prevFiles.filter((file) => file.id !== id));
   };
 
-  const uploadFiles = async (
+  const uploadFilesToBackend = async (
     filesToUpload: LocalFile[],
-    endpointPath: string,
-    fileType: string,
+    endpointPathKey: string,
+    fileTypeLabel: string,
     onSuccessCallback: (uploadedFiles: UploadedBackendFile[]) => void
   ): Promise<boolean> => {
-    const apiEndpoint = getApiEndpoint(endpointPath, 'POST');
+    const apiEndpoint = getApiEndpoint(endpointPathKey, 'POST');
     if (!apiEndpoint) {
       toast({
-        title: `Upload Configuration Error for ${fileType} files`,
-        description: `The API endpoint '${endpointPath}' (POST) is not configured. Please define it in API Docs.`,
+        title: `Upload Configuration Error for ${fileTypeLabel} files`,
+        description: `The API endpoint '${endpointPathKey}' (POST) is not configured. Please define it in API Docs.`,
         variant: "destructive",
         duration: 7000,
       });
@@ -108,40 +106,43 @@ export default function FileUploadSection({ onTemplatesUploaded, onVendorsUpload
     }
 
     const formData = new FormData();
-    filesToUpload.forEach(file => {
-      formData.append('files', file.fileObject, file.name);
+    filesToUpload.forEach(localFile => {
+      formData.append('files', localFile.fileObject, localFile.name);
     });
 
     try {
-      const response = await fetch(`http://localhost:8000${apiEndpoint.path}`, { // Assuming FastAPI runs on port 8000
+      const response = await fetch(`${FASTAPI_BASE_URL}${apiEndpoint.path}`, {
         method: 'POST',
         body: formData,
+        // Headers are automatically set by browser for FormData
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ detail: 'Unknown upload error' }));
-        throw new Error(errorData.detail || `Failed to upload ${fileType} files. Status: ${response.status}`);
+        throw new Error(errorData.detail || `Failed to upload ${fileTypeLabel} files. Status: ${response.status}`);
       }
 
-      const result = await response.json();
+      const result = await response.json(); // Expects { "uploaded_files": ["file_id1", "file_id2", ...] }
+      
       const backendFiles: UploadedBackendFile[] = result.uploaded_files.map((fileId: string) => ({
-        id: fileId,
-        name: fileId, // Or derive name if backend provides more info
+        id: fileId, // The backend returns the filename/ID it used to save
+        name: fileId, 
       }));
       
-      onSuccessCallback(backendFiles); // Pass backend confirmed files to parent
+      onSuccessCallback(backendFiles);
       
       toast({
-        title: `${fileType} Files Uploaded`,
-        description: `${backendFiles.length} file(s) uploaded successfully. Backend IDs: ${backendFiles.map(f => f.id).join(', ')}`,
+        title: `${fileTypeLabel} Files Uploaded`,
+        description: `${backendFiles.length} file(s) uploaded successfully to backend.`,
         variant: 'default',
         className: "bg-accent text-accent-foreground"
       });
       return true;
     } catch (error: any) {
+      console.error(`Error uploading ${fileTypeLabel} files:`, error);
       toast({
-        title: `Upload Failed for ${fileType} files`,
-        description: error.message || 'An unexpected error occurred.',
+        title: `Upload Failed for ${fileTypeLabel} files`,
+        description: error.message || 'An unexpected error occurred during upload.',
         variant: 'destructive',
       });
       return false;
@@ -159,34 +160,28 @@ export default function FileUploadSection({ onTemplatesUploaded, onVendorsUpload
     }
     
     setIsUploading(true);
-    let allUploadsSuccessful = true;
+    let allUploadsInitiatedSuccessfully = true;
 
     if (templateFiles.length > 0) {
-      const success = await uploadFiles(templateFiles, '/template/upload', 'Template', onTemplatesUploaded);
+      const success = await uploadFilesToBackend(templateFiles, '/template/upload', 'Template', onTemplatesUploaded);
       if (success) {
-        setTemplateFiles([]); // Clear local list on successful upload
+        setTemplateFiles([]); 
       } else {
-        allUploadsSuccessful = false;
+        allUploadsInitiatedSuccessfully = false;
       }
     }
     if (vendorFiles.length > 0) {
-      const success = await uploadFiles(vendorFiles, '/vendor/upload', 'Vendor', onVendorsUploaded);
+      const success = await uploadFilesToBackend(vendorFiles, '/vendor/upload', 'Vendor', onVendorsUploaded);
       if (success) {
-        setVendorFiles([]); // Clear local list on successful upload
+        setVendorFiles([]); 
       } else {
-        allUploadsSuccessful = false;
+        allUploadsInitiatedSuccessfully = false;
       }
     }
     
     setIsUploading(false);
-    if (allUploadsSuccessful && (templateFiles.length > 0 || vendorFiles.length > 0)) {
-       toast({
-          title: "All Selected Files Processed for Upload",
-          description: "Uploads initiated. Check individual toasts for status.",
-          variant: "default",
-        });
-    } else if (!allUploadsSuccessful) {
-        // Individual error toasts would have already appeared
+    if (allUploadsInitiatedSuccessfully && (templateFiles.length > 0 || vendorFiles.length > 0)) {
+       // Individual success/failure toasts are handled by uploadFilesToBackend
     }
   };
   
@@ -205,11 +200,6 @@ export default function FileUploadSection({ onTemplatesUploaded, onVendorsUpload
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-              {/* Progress bar could be used if server sent progress, or for a more complex local simulation */}
-              {/* {file.progress !== undefined && file.progress < 100 && file.progress > 0 && (
-                <Progress value={file.progress} className="w-20 h-2" />
-              )}
-              {file.progress === 100 && <span className="text-xs text-green-600">Done</span>} */}
               <Button variant="ghost" size="icon" onClick={() => removeFile(file.id, setFilesFunction)} aria-label={`Remove ${file.name}`}>
                 <XCircle className="h-4 w-4 text-destructive" />
               </Button>
@@ -232,7 +222,7 @@ export default function FileUploadSection({ onTemplatesUploaded, onVendorsUpload
         <Alert variant="default" className="border-primary/30 bg-primary/5">
             <AlertTriangle className="h-4 w-4 text-primary" />
             <AlertDescription className="text-primary/90 text-xs">
-                Ensure 'POST' endpoints for '/template/upload' and '/vendor/upload' are defined on the API Docs page. The FastAPI server must be running on port 8000 and have CORS enabled for your frontend origin (e.g., http://localhost:9002).
+                Ensure 'POST' endpoints for '/template/upload' and '/vendor/upload' are defined on the API Docs page. The FastAPI server (default: http://localhost:8000) must have CORS enabled for your frontend origin (e.g., http://localhost:9002).
             </AlertDescription>
         </Alert>
 

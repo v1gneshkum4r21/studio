@@ -18,6 +18,7 @@ interface ApiEndpoint {
   description: string;
 }
 const API_ENDPOINTS_STORAGE_KEY = 'excelFlowApiEndpoints';
+const FASTAPI_BASE_URL = 'http://localhost:8000';
 
 const getApiEndpoint = (pathKey: string, method: 'GET' | 'POST' | 'DELETE'): ApiEndpoint | undefined => {
   try {
@@ -33,16 +34,16 @@ const getApiEndpoint = (pathKey: string, method: 'GET' | 'POST' | 'DELETE'): Api
 };
 
 interface PipelineSettingsSectionProps {
-  templateFileIds: string[];
-  vendorFileIds: string[];
+  templateFileIds: string[]; // These are IDs/filenames from the backend
+  vendorFileIds: string[];   // These are IDs/filenames from the backend
   onPipelineExecuted: (runId: string) => void;
   hasFilesToProcess: boolean;
 }
 
 export default function PipelineSettingsSection({ templateFileIds, vendorFileIds, onPipelineExecuted, hasFilesToProcess }: PipelineSettingsSectionProps) {
-  const [runName, setRunName] = useState<string>(''); // Optional: if backend uses it
-  const [advancedOption1, setAdvancedOption1] = useState<boolean>(false);
-  const [advancedOption2, setAdvancedOption2] = useState<boolean>(false);
+  const [runName, setRunName] = useState<string>(''); // Optional for now, FastAPI /process doesn't use it
+  const [advancedOption1, setAdvancedOption1] = useState<boolean>(false); // Example option
+  const [advancedOption2, setAdvancedOption2] = useState<boolean>(false); // Example option
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
   const { toast } = useToast();
 
@@ -58,21 +59,20 @@ export default function PipelineSettingsSection({ templateFileIds, vendorFileIds
     if (templateFileIds.length === 0 || vendorFileIds.length === 0) {
       toast({
         title: "Missing Files",
-        description: "Both template and vendor files must be uploaded to start processing.",
+        description: "Both template and vendor files must be uploaded and confirmed by the backend to start processing.",
         variant: "destructive",
       });
       return;
     }
-     // Run name from input is not used by current FastAPI /process, but kept for potential future use
-    if (!runName.trim()) {
-       toast({
-        title: "Validation Error",
-        description: "Run Name cannot be empty (though not currently sent to backend).",
+    // FastAPI /process expects a single vendor file ID string.
+    if (vendorFileIds.length === 0) {
+      toast({
+        title: "Missing Vendor File",
+        description: "At least one vendor file must be uploaded.",
         variant: "destructive",
       });
-      // return; // Commented out as FastAPI doesn't use runName from request
+      return;
     }
-
 
     const processApiEndpoint = getApiEndpoint('/process', 'POST');
     if (!processApiEndpoint) {
@@ -87,16 +87,17 @@ export default function PipelineSettingsSection({ templateFileIds, vendorFileIds
 
     setIsExecuting(true);
     
+    // FastAPI's ProcessRequest expects:
+    // {"templates": ["template_id1.xlsx", "template_id2.xlsx"], "vendor": "vendor_master_id.xlsx"}
     const requestBody = {
-      templates: templateFileIds,
-      vendor: vendorFileIds[0], // FastAPI expects a single vendor file string
-      // Include runName and advancedOptions if your backend supports them
-      // run_name: runName,
-      // advanced_options: { strict_schema_validation: advancedOption1, generate_detailed_log: advancedOption2 }
+      templates: templateFileIds, // Already a list of strings (backend IDs)
+      vendor: vendorFileIds[0], // FastAPI /process expects a single vendor file string
+      // run_name: runName, // If your backend supports it
+      // advanced_options: { strict_schema_validation: advancedOption1, generate_detailed_log: advancedOption2 } // If backend supports
     };
 
     try {
-      const response = await fetch(`http://localhost:8000${processApiEndpoint.path}`, {
+      const response = await fetch(`${FASTAPI_BASE_URL}${processApiEndpoint.path}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -109,21 +110,22 @@ export default function PipelineSettingsSection({ templateFileIds, vendorFileIds
         throw new Error(errorData.detail || `Pipeline execution failed. Status: ${response.status}`);
       }
 
-      const result = await response.json();
-      onPipelineExecuted(result.run_id); // Pass run_id to parent
+      const result = await response.json(); // Expects { "run_id": "...", "status": "queued", "message": "..." }
+      onPipelineExecuted(result.run_id); 
 
       toast({
         title: "Pipeline Execution Started",
-        description: `Run ID: ${result.run_id}. Status: ${result.status}. Check results section for progress.`,
+        description: `Run ID: ${result.run_id}. Status: ${result.status}. ${result.message}`,
         variant: "default",
         className: "bg-accent text-accent-foreground"
       });
       
-      setRunName(''); // Clear run name for next execution
+      setRunName(''); 
       setAdvancedOption1(false);
       setAdvancedOption2(false);
 
     } catch (error: any) {
+      console.error('Error executing pipeline:', error);
       toast({
         title: 'Pipeline Execution Failed',
         description: error.message || 'An unexpected error occurred.',
@@ -140,17 +142,17 @@ export default function PipelineSettingsSection({ templateFileIds, vendorFileIds
         <CardTitle className="font-headline text-xl flex items-center">
           <Settings2 className="mr-2 h-6 w-6 text-primary" /> Pipeline Execution &amp; Settings
         </CardTitle>
-        <CardDescription>Configure and start your Excel processing pipeline. Uses API Docs configurations. Ensure FastAPI server is running with CORS.</CardDescription>
+        <CardDescription>Configure and start your Excel processing pipeline. Ensure API endpoints are defined in API Docs and FastAPI server is running with CORS.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <Alert variant="default" className="border-primary/30 bg-primary/5">
             <AlertTriangle className="h-4 w-4 text-primary" />
             <AlertDescription className="text-primary/90 text-xs">
-                Ensure the 'POST' endpoint for '/process' is defined on the API Docs page. Template and Vendor files must be uploaded first.
+                Ensure the 'POST' endpoint for '/process' is defined on the API Docs page. Template and Vendor files must be uploaded first and confirmed by the backend.
             </AlertDescription>
         </Alert>
         <div>
-          <Label htmlFor="run-name" className="text-base font-semibold">Run Name (Optional)</Label>
+          <Label htmlFor="run-name" className="text-base font-semibold">Run Name (Optional - Not sent to current backend)</Label>
           <Input
             id="run-name"
             placeholder="e.g., Q4_Report_Processing"
