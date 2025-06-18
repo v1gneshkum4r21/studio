@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import AppLayout from '@/components/layout/AppLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -11,8 +11,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Network, PlusCircle, Trash2 } from 'lucide-react';
+import { Network, PlusCircle, Trash2, Save } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+
+const API_ENDPOINTS_STORAGE_KEY = 'excelFlowApiEndpoints';
 
 interface ApiEndpoint {
   id: string;
@@ -28,6 +30,35 @@ export default function ApiDocsPage() {
   const [newApiDescription, setNewApiDescription] = useState('');
   const { toast } = useToast();
 
+  useEffect(() => {
+    try {
+      const storedEndpoints = localStorage.getItem(API_ENDPOINTS_STORAGE_KEY);
+      if (storedEndpoints) {
+        setApiEndpoints(JSON.parse(storedEndpoints));
+      }
+    } catch (error) {
+      console.error("Failed to load API endpoints from localStorage", error);
+      toast({
+        title: 'Error Loading Endpoints',
+        description: 'Could not load saved API endpoint definitions.',
+        variant: 'destructive',
+      });
+    }
+  }, [toast]);
+
+  const saveEndpointsToLocalStorage = (endpoints: ApiEndpoint[]) => {
+    try {
+      localStorage.setItem(API_ENDPOINTS_STORAGE_KEY, JSON.stringify(endpoints));
+    } catch (error) {
+      console.error("Failed to save API endpoints to localStorage", error);
+      toast({
+        title: 'Error Saving Endpoints',
+        description: 'Could not save API endpoint definitions to local storage.',
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handleAddEndpoint = () => {
     if (!newApiPath.trim() || !newApiDescription.trim()) {
       toast({
@@ -39,19 +70,23 @@ export default function ApiDocsPage() {
     }
 
     const newEndpoint: ApiEndpoint = {
-      id: Date.now().toString() + Math.random().toString(36).substring(2), // Simple unique ID
+      id: Date.now().toString() + Math.random().toString(36).substring(2),
       path: newApiPath,
       method: newApiMethod,
       description: newApiDescription,
     };
 
-    setApiEndpoints((prevEndpoints) => [...prevEndpoints, newEndpoint]);
+    setApiEndpoints((prevEndpoints) => {
+      const updatedEndpoints = [...prevEndpoints, newEndpoint];
+      saveEndpointsToLocalStorage(updatedEndpoints);
+      return updatedEndpoints;
+    });
+
     setNewApiPath('');
-    // setNewApiMethod('GET'); // Optionally reset method or keep last used
     setNewApiDescription('');
     toast({
       title: 'API Endpoint Added',
-      description: `Endpoint "${newEndpoint.path}" has been added.`,
+      description: `Endpoint "${newEndpoint.path}" has been added and saved.`,
       variant: 'default',
       className: 'bg-accent text-accent-foreground'
     });
@@ -59,11 +94,15 @@ export default function ApiDocsPage() {
 
   const handleRemoveEndpoint = (id: string) => {
     const endpointToRemove = apiEndpoints.find(ep => ep.id === id);
-    setApiEndpoints((prevEndpoints) => prevEndpoints.filter((endpoint) => endpoint.id !== id));
+    setApiEndpoints((prevEndpoints) => {
+      const updatedEndpoints = prevEndpoints.filter((endpoint) => endpoint.id !== id);
+      saveEndpointsToLocalStorage(updatedEndpoints);
+      return updatedEndpoints;
+    });
     if (endpointToRemove) {
       toast({
         title: 'API Endpoint Removed',
-        description: `Endpoint "${endpointToRemove.path}" has been removed.`,
+        description: `Endpoint "${endpointToRemove.path}" has been removed and configuration saved.`,
         variant: 'default',
       });
     }
@@ -76,7 +115,7 @@ export default function ApiDocsPage() {
           <Network className="h-8 w-8 text-primary" />
           <div>
             <h1 className="font-headline text-3xl font-bold tracking-tight">Live API Endpoint Editor</h1>
-            <p className="text-muted-foreground">Add, view, and manage your API endpoint definitions dynamically.</p>
+            <p className="text-muted-foreground">Add, view, and manage your API endpoint definitions. Changes are saved to local storage.</p>
           </div>
         </div>
 
@@ -87,7 +126,7 @@ export default function ApiDocsPage() {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <Label htmlFor="api-path">Path</Label>
+                <Label htmlFor="api-path">Path (e.g., /template/upload)</Label>
                 <Input
                   id="api-path"
                   value={newApiPath}
@@ -133,7 +172,7 @@ export default function ApiDocsPage() {
           <CardHeader>
             <CardTitle className="font-headline text-xl">Defined API Endpoints</CardTitle>
             {apiEndpoints.length === 0 && (
-              <CardDescription>No API endpoints defined yet. Add one using the form above.</CardDescription>
+              <CardDescription>No API endpoints defined yet. Add one using the form above. These definitions will be used by other parts of the application.</CardDescription>
             )}
           </CardHeader>
           {apiEndpoints.length > 0 && (
