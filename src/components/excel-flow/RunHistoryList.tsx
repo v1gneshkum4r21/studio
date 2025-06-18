@@ -109,7 +109,7 @@ export default function RunHistoryList() {
       
       const data: BackendHistoryItem[] = await response.json(); 
       
-      const mappedRuns: ArchivedRun[] = data.map((run: BackendHistoryItem) => {
+      const initialMappedRuns: ArchivedRun[] = data.map((run: BackendHistoryItem) => {
         const files: RunOutputFile[] = [];
         if (run.outputs) {
             Object.entries(run.outputs).forEach(([templateName, fileTypeMap]) => {
@@ -141,12 +141,30 @@ export default function RunHistoryList() {
           vendorFileCount: run.vendor ? 1 : 0, // FastAPI takes one vendor
           metrics: run.metrics
         };
-      }).sort((a,b) => parseISO(b.executionDate).getTime() - parseISO(a.executionDate).getTime()); 
+      });
       
-      setArchivedRuns(mappedRuns);
-      if (mappedRuns.length > 0) {
-        toast({title: "Run History Loaded", description: `${mappedRuns.length} past runs fetched.`, variant: "default"});
-      } else if (data.length === 0) {
+      const sortedMappedRuns = initialMappedRuns.sort((a,b) => parseISO(b.executionDate).getTime() - parseISO(a.executionDate).getTime()); 
+
+      const uniqueRunsMap = new Map<string, ArchivedRun>();
+      let duplicateDetected = false;
+      sortedMappedRuns.forEach(run => {
+        if (uniqueRunsMap.has(run.id)) {
+          duplicateDetected = true;
+        } else {
+          uniqueRunsMap.set(run.id, run);
+        }
+      });
+
+      if (duplicateDetected) {
+        console.warn("RunHistoryList: Duplicate run IDs detected from the backend. Displaying only the first occurrence of each (newest first).");
+      }
+      
+      const finalRuns = Array.from(uniqueRunsMap.values());
+      setArchivedRuns(finalRuns);
+
+      if (finalRuns.length > 0) {
+        toast({title: "Run History Loaded", description: `${finalRuns.length} past runs fetched.`, variant: "default"});
+      } else if (data.length === 0) { // Check original data length for "No history" message
         toast({title: "No Run History", description: "No past runs found on the server.", variant: "default"});
       }
 
@@ -327,3 +345,5 @@ export default function RunHistoryList() {
     </Card>
   );
 }
+
+    
