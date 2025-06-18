@@ -1,10 +1,11 @@
+
 'use client';
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { Menu, FileSpreadsheet, Settings, BotMessageSquare, History, Package } from 'lucide-react';
+import { Menu, FileSpreadsheet, Settings, BotMessageSquare, History, Package, Network } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const navItems = [
@@ -12,6 +13,7 @@ const navItems = [
   { href: '/accuracy', label: 'AI Accuracy', icon: BotMessageSquare },
   { href: '/history', label: 'Run History', icon: History },
   { href: '/settings', label: 'Settings', icon: Settings },
+  { href: '/api-docs', label: 'API Docs', icon: Network },
 ];
 
 export default function Header() {
